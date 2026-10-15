@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pixels to Action — Multi-Agent Visual Intelligence</title>
+<style>
+  :root{
+    --bg:#0b0b10; --fg:#f4f4f7; --dim:#9aa0b4; --line:#262a3a;
+    --a:#a100ff; --a2:#7f5bff; --ok:#22c99b; --warn:#ffb020; --bad:#ff5c6c;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--fg); overflow:hidden;
+    font:16px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Inter,system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .slide{
+    position:absolute; inset:0; display:none;
+    padding:5.5vh 6vw 9vh; flex-direction:column;
+    animation:in .28s ease both;
+  }
+  .slide.on{display:flex}
+  @keyframes in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+  .kicker{color:var(--a2);font-weight:700;letter-spacing:.14em;text-transform:uppercase;font-size:clamp(11px,1.05vw,15px)}
+  h1{font-size:clamp(34px,5.4vw,82px);line-height:1.02;letter-spacing:-.025em;font-weight:800}
+  h2{font-size:clamp(26px,3.5vw,54px);line-height:1.05;letter-spacing:-.02em;font-weight:800;margin:.35em 0 .55em}
+  h2 em{font-style:normal;color:var(--a2)}
+  p.lead{font-size:clamp(16px,1.65vw,26px);color:var(--dim);max-width:56ch}
+  .flow{font-size:clamp(15px,1.9vw,30px);font-weight:700;letter-spacing:-.01em;margin-top:.9em}
+  .flow span{color:var(--a2)}
+
+  .grid{display:grid;gap:clamp(10px,1.3vw,20px);flex:1;min-height:0;align-content:start}
+  .g2{grid-template-columns:repeat(2,1fr)} .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)} .g5{grid-template-columns:repeat(5,1fr)}
+  .card{
+    border:1px solid var(--line); border-radius:14px; padding:clamp(12px,1.3vw,22px);
+    background:linear-gradient(180deg,#14141dcc,#0e0e15cc); min-height:0;
+  }
+  .card h3{font-size:clamp(14px,1.35vw,21px);font-weight:750;letter-spacing:-.01em;margin-bottom:.45em}
+  .card h3 b{color:var(--a2);font-weight:800}
+  .card p,.card li{font-size:clamp(12px,1.08vw,17px);color:var(--dim)}
+  .card ul{list-style:none} .card li{padding-left:.95em;position:relative;margin-top:.3em}
+  .card li:before{content:"";position:absolute;left:0;top:.62em;width:4px;height:4px;border-radius:50%;background:var(--a2)}
+  .card.hi{border-color:var(--a);box-shadow:0 0 0 1px #a100ff33,0 14px 50px -20px #a100ff66}
+
+  ul.big{list-style:none;margin-top:.3em}
+  ul.big li{font-size:clamp(15px,1.5vw,24px);padding-left:1.5em;position:relative;margin-top:.55em;color:var(--fg)}
+  ul.big li:before{content:"→";position:absolute;left:0;color:var(--a2);font-weight:800}
+  ul.big li small{display:block;color:var(--dim);font-size:.72em;margin-top:.1em}
+
+  .pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:.3em .8em;font-size:clamp(11px,1vw,15px);color:var(--dim);margin:.25em .3em 0 0}
+  .pill.in{border-color:#22c99b66;color:#8ee9cd} .pill.out{border-color:#ff5c6c55;color:#ffa7b0}
+
+  /* pipeline diagram */
+  .plane{border:1px solid var(--line);border-radius:14px;padding:clamp(10px,1.1vw,18px);background:#0f0f17aa}
+  .plane>.t{font-size:clamp(11px,1.05vw,15px);font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--a2);margin-bottom:.7em}
+  .row{display:flex;align-items:stretch;gap:clamp(5px,.6vw,10px);flex-wrap:nowrap}
+  .box{
+    flex:1;border:1px solid var(--line);border-radius:10px;padding:clamp(7px,.8vw,13px);
+    background:#15151f;font-size:clamp(10.5px,.98vw,15px);font-weight:650;line-height:1.25;min-width:0
+  }
+  .box small{display:block;font-weight:450;color:var(--dim);font-size:.82em;margin-top:.25em}
+  .box.ai{border-color:#7f5bff88;background:linear-gradient(180deg,#1b1630,#121020)}
+  .box.det{border-color:#22c99b66;background:linear-gradient(180deg,#0f1f1b,#0d1512)}
+  .arr{display:flex;align-items:center;color:var(--a2);font-weight:800;font-size:clamp(12px,1.2vw,19px)}
+  .store{display:flex;gap:clamp(5px,.6vw,10px);margin-top:clamp(6px,.7vw,12px)}
+  .store .box{flex:1;border-style:dashed}
+
+  .legend{display:flex;gap:1.2em;margin-top:.8em;font-size:clamp(11px,.95vw,15px);color:var(--dim);flex-wrap:wrap}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:.45em}
+
+  table{width:100%;border-collapse:collapse;margin-top:.5em}
+  td,th{text-align:left;padding:clamp(6px,.75vw,13px) .6em;border-bottom:1px solid var(--line);font-size:clamp(12px,1.08vw,18px);vertical-align:top}
+  th{color:var(--a2);font-size:clamp(11px,.95vw,14px);text-transform:uppercase;letter-spacing:.09em}
+  td b{color:var(--fg)} td{color:var(--dim)}
+
+  .nav{position:absolute;bottom:2.4vh;left:6vw;right:6vw;display:flex;justify-content:space-between;align-items:center;font-size:clamp(11px,.95vw,14px);color:#5b6076}
+  .nav b{color:var(--a2)}
+  .bar{position:absolute;bottom:0;left:0;height:3px;background:linear-gradient(90deg,var(--a),var(--a2));transition:width .28s ease}
+  .hint{opacity:.65}
+  @media print{ .slide{display:flex!important;position:relative;height:100vh;page-break-after:always} .nav,.bar{display:none} }
+</style>
+</head>
+<body>
+
+<!-- 1 -->
+<section class="slide on">
+  <div class="kicker">Workshop #CodeMeet Barcelona · Accenture &amp; Codemotion</div>
+  <h1>Pixels to Action</h1>
+  <p class="lead" style="margin-top:.5em">A multi-agent Document Intelligence Assistant for banking &amp; legal documentation that arrives as images.</p>
+  <div class="flow">Document / Image <span>→</span> Understanding <span>→</span> Reasoning <span>→</span> Answer / Action</div>
+  <div style="margin-top:auto">
+    <div class="pill">Group __</div><div class="pill">__________</div><div class="pill">__________</div><div class="pill">__________</div>
+  </div>
+</section>
+
+<!-- 2 -->
+<section class="slide">
+  <div class="kicker">1 · Understand the situation</div>
+  <h2>The text is in there. <em>It's just not reachable.</em></h2>
+  <div class="grid g3">
+    <div class="card"><h3>Who</h3><ul>
+      <li><b>Ops / back-office analyst</b> — opens a file, hunts for a figure</li>
+      <li><b>Legal &amp; compliance</b> — clause review, obligations</li>
+      <li><b>Risk / credit officer</b> — cross-document checks</li>
+      <li><b>Downstream systems</b> — need structured fields, not prose</li>
+    </ul></div>
+    <div class="card"><h3>What hurts today</h3><ul>
+      <li>Scanned pages are opaque: no search, no filter, no aggregation</li>
+      <li>Heterogeneous layouts, tables, stamps, multi-doc PDFs</li>
+      <li>Manual reading does not scale; errors are silent</li>
+      <li>No audit trail for "where did this number come from?"</li>
+    </ul></div>
+    <div class="card"><h3>What they actually ask</h3><ul>
+      <li><b>Lookup</b> — "What is the IBAN on this contract?"</li>
+      <li><b>Aggregate</b> — "Total charges across these 12 statements"</li>
+      <li><b>Compare</b> — "Does the deed match the loan application?"</li>
+      <li><b>Infer</b> — "Is there an early-repayment penalty?"</li>
+      <li><b>Act</b> — "Flag this file for manual review"</li>
+    </ul></div>
+  </div>
+  <p class="lead" style="margin-top:1em;max-width:none"><b style="color:var(--fg)">Design consequence:</b> four of those five question types cannot be answered by OCR alone.</p>
+</section>
+
+<!-- 3 -->
+<section class="slide">
+  <div class="kicker">1 · Scope &amp; assumptions</div>
+  <h2>We cut the problem <em>before</em> we design it.</h2>
+  <div class="grid g2">
+    <div class="card hi"><h3>In scope — v1</h3>
+      <div><span class="pill in">Scanned PDF + image</span><span class="pill in">ES / EN</span><span class="pill in">2 document families</span><span class="pill in">Grounded Q&amp;A with citations</span><span class="pill in">Field extraction + validation</span><span class="pill in">Abstain when unsure</span><span class="pill in">Read-only answers</span><span class="pill in">Evidence viewer UI</span></div>
+    </div>
+    <div class="card"><h3>Out of scope — on purpose</h3>
+      <div><span class="pill out">Free-form handwriting</span><span class="pill out">Real-time / sub-second</span><span class="pill out">Write-back to core banking</span><span class="pill out">Model fine-tuning</span><span class="pill out">Autonomous execution</span><span class="pill out">Multi-tenant isolation</span><span class="pill out">Knowledge graph reasoning</span></div>
+    </div>
+    <div class="card"><h3>Constraints we design around</h3><ul>
+      <li>Regulated sector: PII, EU data residency, retention limits</li>
+      <li>Every answer must be auditable and reconstructable</li>
+      <li>A wrong number is far more expensive than "I don't know"</li>
+      <li>Document volume is daily and batchy, not streaming</li>
+    </ul></div>
+    <div class="card"><h3>Assumptions we're making</h3><ul>
+      <li>Corpus is known in advance → we can pre-process</li>
+      <li>Scans are mostly machine-printed, ~200–300 dpi</li>
+      <li>A human review queue already exists to escalate into</li>
+      <li>We can call a hosted frontier VLM from inside the perimeter</li>
+    </ul></div>
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="slide">
+  <div class="kicker">2 · Design the capabilities</div>
+  <h2>Six capabilities. <em>Only three need generative AI.</em></h2>
+  <div class="grid g3">
+    <div class="card det" style="border-color:#22c99b66"><h3><b>C1</b> Ingest &amp; normalize</h3><p>Dedupe by hash, split multi-doc PDFs, deskew, orientation, quality score, page images. <b style="color:var(--ok)">Deterministic + classic CV.</b></p></div>
+    <div class="card"><h3><b>C2</b> Perceive the page</h3><p>Layout-aware reading: text, reading order, tables, key-value regions, stamps, signatures — with bounding boxes. <b style="color:var(--a2)">VLM + OCR cross-check.</b></p></div>
+    <div class="card det" style="border-color:#22c99b66"><h3><b>C3</b> Classify &amp; route</h3><p>Document type + language → selects the extraction schema and the validation rules. <b style="color:var(--ok)">Small classifier, rules first.</b></p></div>
+    <div class="card"><h3><b>C4</b> Extract to schema</h3><p>Per-type JSON schema, per-field confidence, per-field provenance (page + bbox). <b style="color:var(--a2)">Generative, constrained output.</b></p></div>
+    <div class="card"><h3><b>C5</b> Reason &amp; answer</h3><p>Plan the question, retrieve, re-read pixels if needed, synthesize with mandatory citations, or abstain. <b style="color:var(--a2)">Agentic.</b></p></div>
+    <div class="card det" style="border-color:#22c99b66"><h3><b>C6</b> Act &amp; escalate</h3><p>Propose a next step, open a review task, emit structured output to downstream systems. <b style="color:var(--ok)">Whitelisted, logged tools.</b></p></div>
+  </div>
+  <div class="legend"><span><i style="background:var(--a2)"></i>Model-driven</span><span><i style="background:var(--ok)"></i>Deterministic software</span></div>
+</section>
+
+<!-- 5 -->
+<section class="slide">
+  <div class="kicker">2 · Autonomy</div>
+  <h2>Autonomy is a dial, <em>not a property of the system.</em></h2>
+  <table>
+    <tr><th style="width:9%">Level</th><th style="width:26%">System does</th><th style="width:30%">Example</th><th>Who decides</th></tr>
+    <tr><td><b style="color:var(--ok)">L0</b></td><td><b>Answers with evidence</b></td><td>"The IBAN is ES91… — page 3, highlighted"</td><td>Nobody. Read-only. <b>This is our MVP.</b></td></tr>
+    <tr><td><b style="color:var(--ok)">L1</b></td><td><b>Extracts &amp; structures</b></td><td>Populates 14 fields of a loan record</td><td>Auto-accept above confidence τ, else human</td></tr>
+    <tr><td><b style="color:var(--warn)">L2</b></td><td><b>Proposes an action</b></td><td>"Mismatch found → suggest flag for review"</td><td>Human clicks. One click, fully logged</td></tr>
+    <tr><td><b style="color:var(--warn)">L3</b></td><td><b>Executes reversible work</b></td><td>Opens the review ticket, routes the file</td><td>System acts, human notified, undo available</td></tr>
+    <tr><td><b style="color:var(--bad)">L4</b></td><td><b>Executes irreversible work</b></td><td>Approves, pays, signs, writes to core banking</td><td><b style="color:var(--bad)">Never. Out of scope by design.</b></td></tr>
+  </table>
+  <p class="lead" style="margin-top:1em;max-width:none">We earn each level with measured evidence from the level below it.</p>
+</section>
+
+<!-- 6 -->
+<section class="slide">
+  <div class="kicker">3 · Design the solution</div>
+  <h2>Two planes: <em>ingestion</em> once, <em>query</em> many times.</h2>
+  <div style="display:flex;flex-direction:column;gap:clamp(8px,1vw,16px);flex:1;min-height:0">
+    <div class="plane">
+      <div class="t">Ingestion plane — batch, runs once per document</div>
+      <div class="row">
+        <div class="box det">Intake<small>hash, dedupe, split, deskew, quality score</small></div><div class="arr">→</div>
+        <div class="box ai">Vision agent<small>layout, reading order, tables, bboxes</small></div><div class="arr">→</div>
+        <div class="box det">Classifier<small>type + language → schema</small></div><div class="arr">→</div>
+        <div class="box ai">Extractor agent<small>schema JSON + confidence + provenance</small></div><div class="arr">→</div>
+        <div class="box det">Validators<small>IBAN checksum, totals, dates, cross-field</small></div>
+      </div>
+      <div class="store">
+        <div class="box">Page images<small>object store — the pixels are never discarded</small></div>
+        <div class="box">Document record<small>text, tables, fields, bboxes, confidences</small></div>
+        <div class="box">Hybrid index<small>BM25 + embeddings + metadata filters</small></div>
+        <div class="box">Field store<small>SQL — exact, cheap, aggregable</small></div>
+      </div>
+    </div>
+    <div class="plane" style="border-color:#a100ff55">
+      <div class="t">Query plane — on demand, per question</div>
+      <div class="row">
+        <div class="box ai">Orchestrator<small>classifies intent, plans the route</small></div><div class="arr">→</div>
+        <div class="box det">SQL lookup<small>exact fields &amp; aggregation</small></div>
+        <div class="box det">Hybrid retrieval<small>+ rerank, ACL-filtered</small></div>
+        <div class="box ai">Pixel re-read<small>crops the page, looks again</small></div>
+        <div class="box det">Compute tool<small>all arithmetic — never the LLM</small></div>
+        <div class="arr">→</div>
+        <div class="box ai">Synthesizer<small>answer + citations</small></div><div class="arr">→</div>
+        <div class="box ai">Verifier<small>claim-level grounding gate</small></div>
+      </div>
+    </div>
+  </div>
+  <div class="legend"><span><i style="background:#7f5bff"></i>Agent / model</span><span><i style="background:var(--ok)"></i>Deterministic tool</span><span class="hint">Pre-process because: aggregation across documents, p95 latency, cost amortized once, and a stable artifact to audit. Cold uploads fall back to on-demand.</span></div>
+</section>
+
+<!-- 7 -->
+<section class="slide">
+  <div class="kicker">3 · The one idea worth remembering</div>
+  <h2>We never throw away <em>the pixels.</em></h2>
+  <p class="lead">Most document pipelines flatten a page to text and then reason over a lossy transcript. Every downstream error inherits that loss, and nothing can recover it.</p>
+  <div class="grid g2" style="margin-top:1.2em">
+    <div class="card"><h3 style="color:var(--bad)">Text-only pipeline</h3><ul>
+      <li>A merged table cell becomes a wrong number, silently</li>
+      <li>A stamp, a signature, a strike-through simply vanishes</li>
+      <li>"Which column was this under?" is unanswerable</li>
+      <li>Re-asking harder does not help — the evidence is gone</li>
+    </ul></div>
+    <div class="card hi"><h3>Our pipeline</h3><ul>
+      <li>Every extracted value keeps <b>page + bounding box</b></li>
+      <li>Hard or low-confidence questions trigger a <b>crop and re-read</b> of that exact region with a stronger model</li>
+      <li>The user is shown <b>the highlighted crop</b>, not a claim about it</li>
+      <li>Resolution is a <b>cost dial</b>: cheap pass for everything, expensive pass only where it matters</li>
+    </ul></div>
+  </div>
+  <p class="lead" style="margin-top:1.1em;max-width:none"><b style="color:var(--fg)">This is what makes it visual intelligence</b> rather than OCR with a chatbot stapled on.</p>
+</section>
+
+<!-- 8 -->
+<section class="slide">
+  <div class="kicker">3 · The seam</div>
+  <h2>Where deterministic software ends, <em>and AI begins.</em></h2>
+  <div class="grid g2">
+    <div class="card det" style="border-color:#22c99b66"><h3 style="color:var(--ok)">Deterministic — boring on purpose</h3><ul>
+      <li>Orchestration, routing, retries, idempotency</li>
+      <li>Retrieval, filtering, access control (applied <b>before</b> retrieval, never after)</li>
+      <li>All arithmetic, totals and date math</li>
+      <li>Format &amp; checksum validation: IBAN, NIF, dates, amounts</li>
+      <li>Confidence thresholding and escalation rules</li>
+      <li>Audit logging and trace capture</li>
+    </ul></div>
+    <div class="card"><h3 style="color:var(--a2)">Model-driven — where ambiguity lives</h3><ul>
+      <li>Reading an unfamiliar layout</li>
+      <li>Mapping messy page content onto a clean schema</li>
+      <li>Interpreting a clause, inferring an answer from context</li>
+      <li>Planning which tool a question needs</li>
+      <li>Judging whether a drafted answer is actually grounded</li>
+    </ul></div>
+  </div>
+  <p class="lead" style="margin-top:1em;max-width:none">Rule we hold ourselves to: <b style="color:var(--fg)">if a rule can do it, a model must not.</b> Cheaper, testable, and it cannot hallucinate.</p>
+</section>
+
+<!-- 9 -->
+<section class="slide">
+  <div class="kicker">4 · Trust &amp; control</div>
+  <h2>Evidence-first, or <em>no answer at all.</em></h2>
+  <div class="grid g3">
+    <div class="card hi"><h3>The hard gate</h3><ul>
+      <li>Every claim carries doc + page + bbox</li>
+      <li>A verifier agent checks each claim against its cited span</li>
+      <li><b>No citation → the answer does not ship</b></li>
+      <li>Abstention is a success state, not a failure</li>
+    </ul></div>
+    <div class="card"><h3>How we measure</h3><ul>
+      <li><b>Groundedness</b> and citation accuracy — primary gate</li>
+      <li><b>Correct-abstention rate</b> on unanswerable questions</li>
+      <li>Field precision / recall / exact match; table structure (TEDS)</li>
+      <li>End-to-end task success, p95 latency, cost per doc &amp; per query</li>
+    </ul></div>
+    <div class="card"><h3>Golden dataset</h3><ul>
+      <li>~300 real documents across the two families</li>
+      <li>Field-level ground truth, labelled by ops</li>
+      <li>~150 Q&amp;A pairs — <b>20% deliberately unanswerable</b>, 20% adversarial / near-miss</li>
+      <li>Replayed nightly as a canary; blocks release on regression</li>
+    </ul></div>
+    <div class="card"><h3>Fallback ladder</h3><ul>
+      <li>Low confidence → re-read the crop with a stronger model</li>
+      <li>Still low → answer partially, state what is missing</li>
+      <li>Still low → <b>abstain</b> and open a review task</li>
+      <li>Human gets the pre-highlighted crop, not the whole file</li>
+    </ul></div>
+    <div class="card"><h3>Drift detection</h3><ul>
+      <li>Confidence distribution and abstention-rate shift</li>
+      <li>Per-document OCR quality score trend</li>
+      <li>LLM-judge sampling on live traffic + user thumbs-down</li>
+      <li>Alert on new document layouts appearing in the mix</li>
+    </ul></div>
+    <div class="card"><h3>Observability</h3><ul>
+      <li>One trace per question: plan, docs retrieved, crops read, prompts, model versions, confidences, cost</li>
+      <li>Fully replayable → we can always reconstruct <b>why</b></li>
+      <li>That trace is the compliance artifact</li>
+    </ul></div>
+  </div>
+</section>
+
+<!-- 10 -->
+<section class="slide">
+  <div class="kicker">4 · Failure modes</div>
+  <h2>What breaks, and <em>what catches it.</em></h2>
+  <table>
+    <tr><th style="width:30%">Failure mode</th><th style="width:34%">Why it is dangerous here</th><th>Control</th></tr>
+    <tr><td><b>Invented figures</b></td><td>A plausible wrong amount enters a credit decision</td><td>Citation gate + verifier + arithmetic outside the model + abstain</td></tr>
+    <tr><td><b>Digit-level OCR error</b></td><td>8→3 in an IBAN or an amount passes every text check</td><td>Checksum validation, totals reconciliation, dual-pass on numerics, pixel re-read</td></tr>
+    <tr><td><b>Prompt injection inside a document</b></td><td>A scanned page says "ignore your instructions" — attacker-controlled input</td><td>Document content is <b>data, never instruction</b>; strict role separation; agents hold no destructive tools</td></tr>
+    <tr><td><b>PII leakage / wrong-eyes access</b></td><td>Regulated data, real customers</td><td>Redaction at ingest, ACL filters pre-retrieval, EU residency, no training on client data, retention limits</td></tr>
+    <tr><td><b>Silent degradation</b></td><td>A new scanner or layout quietly drops accuracy</td><td>Nightly canary replay, drift alerts, layout-novelty detection</td></tr>
+    <tr><td><b>Over-trust by users</b></td><td>Confident prose stops getting checked</td><td>Evidence shown by default, confidence surfaced, visible abstentions</td></tr>
+  </table>
+</section>
+
+<!-- 11 -->
+<section class="slide">
+  <div class="kicker">5 · From concept to MVP</div>
+  <h2>What we'd actually build <em>first.</em></h2>
+  <div class="grid g3">
+    <div class="card hi"><h3>MVP — the thin slice</h3><ul>
+      <li>Two document families, ~500 real documents</li>
+      <li>Ingestion → VLM read → 10–14 field schema → validators</li>
+      <li>Hybrid retrieval + grounded Q&amp;A with citations and abstention</li>
+      <li>Evidence viewer: answer next to the highlighted crop</li>
+      <li>Eval harness + 150 golden Q&amp;A wired into CI</li>
+      <li><b>Three agents only:</b> orchestrator, extractor, verifier</li>
+    </ul></div>
+    <div class="card"><h3>Deliberately simplified</h3><ul>
+      <li>Read-only — L0 autonomy, no action execution</li>
+      <li>No fine-tuning, no custom models: hosted frontier VLM</li>
+      <li>Batch ingestion overnight, no streaming</li>
+      <li>Single tenant, one language pair, no handwriting</li>
+      <li>Buy the model, the vector store, the object store. <b>Build the orchestration, the schemas, the eval and trust layer</b> — that is the differentiator</li>
+    </ul></div>
+    <div class="card"><h3>Hypotheses to kill fast</h3><ul>
+      <li><b>H1</b> A frontier VLM on page images beats OCR+text-LLM on <i>our</i> layouts → 50-doc bake-off, day one</li>
+      <li><b>H2</b> Citations + visible abstention are what buy ops trust</li>
+      <li><b>H3</b> Real questions are mostly lookups → the cheap SQL path carries the volume</li>
+      <li><b>H4</b> Cost per document is acceptable at production volume</li>
+    </ul></div>
+  </div>
+  <p class="lead" style="margin-top:1em;max-width:none"><b style="color:var(--fg)">Biggest risk is not model capability — it is numeric precision under regulation.</b> So we measure groundedness before we add features.</p>
+</section>
+
+<!-- 12 -->
+<section class="slide">
+  <div class="kicker">5 · Phase 2 &amp; close</div>
+  <h2>What earns phase two.</h2>
+  <div class="grid g2">
+    <div class="card"><h3>We evolve only if…</h3><ul>
+      <li>Groundedness ≥ 95% and zero ungrounded numerics on the golden set</li>
+      <li>Field accuracy beats the current manual baseline at lower cost per document</li>
+      <li>Ops actually prefer the abstention over a guess</li>
+      <li>Cost per query stays inside the envelope at real volume</li>
+    </ul></div>
+    <div class="card"><h3>Then we add</h3><ul>
+      <li>L2 action layer: propose, human confirms, fully logged</li>
+      <li>Cross-document reasoning over an entity graph</li>
+      <li>Feedback-driven active learning from the review queue</li>
+      <li>Distilled small model for the high-volume document types to cut unit cost</li>
+      <li>Multi-tenant isolation and broader language coverage</li>
+    </ul></div>
+  </div>
+  <div style="margin-top:auto">
+    <div class="flow" style="font-size:clamp(17px,2.4vw,40px)">Pixels <span>→</span> Understanding <span>→</span> Reasoning <span>→</span> <span style="color:var(--fg)">Evidence</span> <span>→</span> Action</div>
+    <p class="lead" style="margin-top:.5em">The system's job is not to sound right. It is to show you where it read it.</p>
+  </div>
+</section>
+
+<div class="nav"><span id="lbl"></span><span class="hint">← → / space · F fullscreen</span><span><b id="n">1</b> / <span id="t">12</span></span></div>
+<div class="bar" id="bar"></div>
+
+<script>
+  const s=[...document.querySelectorAll('.slide')];
+  const labels=["Title","Situation","Scope","Capabilities","Autonomy","Architecture","Pixels","AI seam","Trust","Failure modes","MVP","Phase 2"];
+  let i=0; const t=document.getElementById('t'); t.textContent=s.length;
+  function go(k){
+    i=Math.max(0,Math.min(s.length-1,k));
+    s.forEach((e,j)=>e.classList.toggle('on',j===i));
+    document.getElementById('n').textContent=i+1;
+    document.getElementById('lbl').textContent=labels[i]||'';
+    document.getElementById('bar').style.width=((i+1)/s.length*100)+'%';
+    location.hash=i+1;
+  }
+  addEventListener('keydown',e=>{
+    if(['ArrowRight','PageDown',' ','Enter','n','j'].includes(e.key)){e.preventDefault();go(i+1)}
+    else if(['ArrowLeft','PageUp','p','k'].includes(e.key)){e.preventDefault();go(i-1)}
+    else if(e.key==='Home')go(0); else if(e.key==='End')go(s.length-1);
+    else if(e.key==='f'||e.key==='F'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()}
+  });
+  addEventListener('click',e=>{ if(e.clientX < innerWidth*0.22) go(i-1); else go(i+1) });
+  go(parseInt(location.hash.slice(1))-1||0);
+</script>
+</body>
+</html>
