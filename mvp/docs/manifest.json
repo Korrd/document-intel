@@ -1,0 +1,58 @@
+[
+  {
+    "id": "stmt-2026-07",
+    "name": "Extracto Bancario - Julio 2026",
+    "doc_type": "bank_statement",
+    "image": "stmt-2026-07.png",
+    "truth": {
+      "iban": "ES9121000418450200051332",
+      "holder": "MARTA ELENA RUIZ SANTOS",
+      "nif": "52410887M",
+      "period_start": "2026-07-01",
+      "period_end": "2026-07-31",
+      "opening_balance": 4655.45,
+      "closing_balance": 5390.78,
+      "total_debit": 2690.89,
+      "total_credit": 3426.22,
+      "total_fees": 116.25
+    }
+  },
+  {
+    "id": "loan-0098-4471",
+    "name": "Contrato de Prestamo Hipotecario",
+    "doc_type": "loan_contract",
+    "image": "loan-0098-4471.png",
+    "truth": {
+      "contract_ref": "0098-4471",
+      "borrower": "MARTA ELENA RUIZ SANTOS",
+      "nif": "52410887M",
+      "iban": "ES9121000418450200051332",
+      "principal": 245000.0,
+      "term_months": 300,
+      "rate_type": "variable",
+      "spread": "EURIBOR 12M + 0,89%",
+      "monthly_payment": 1284.36,
+      "apr": "2,71%",
+      "early_repayment_penalty": "0,25% during first 3 years, none thereafter",
+      "signature_present": true,
+      "stamp_present": true
+    }
+  },
+  {
+    "id": "deed-4471",
+    "name": "Escritura de Prestamo Hipotecario",
+    "doc_type": "mortgage_deed",
+    "image": "deed-4471.png",
+    "truth": {
+      "protocol": "1.482/2024",
+      "borrower": "MARTA ELENA RUIZ SANTOS",
+      "nif": "52410887M",
+      "principal": 245000.0,
+      "monthly_payment": 1248.36,
+      "term_months": 300,
+      "appraisal_value": 352000.0,
+      "property": "C/ Provenca 287, 4o 2a, 08008 Barcelona",
+      "cadastral_ref": "8842701DF2884S0014WR"
+    }
+  }
+]
