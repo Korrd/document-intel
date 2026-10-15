@@ -58,7 +58,9 @@ Design consequence: a single RAG-over-OCR-text path handles (1) and partially (4
 
 ### Scope — v1
 
-**In:** scanned PDF and image input · ES/EN · two document families · field extraction with validation · grounded Q&A with citations · abstention · evidence-viewer UI · read-only answers.
+**In:** scanned PDF and image input · ES/EN · two document families · field extraction with validation · grounded Q&A with citations · abstention · EU AI Act pre/post-flight gate · evidence-viewer UI · read-only answers.
+
+**Bronze accepts more than images.** The layer is defined by heterogeneous intake — scans, photographs, spreadsheets, native PDFs — and normalizing all of it into one Silver representation. The MVP implements the image path first because it is the hard one and the one the brief is about; spreadsheets and native-text PDFs are a declared Bronze slot for phase 2, not an afterthought.
 
 **Out, deliberately:** free-form handwriting · real-time latency · write-back to core banking · model fine-tuning · autonomous execution · multi-tenant isolation · knowledge-graph reasoning.
 
@@ -83,6 +85,9 @@ Six capabilities. We were explicit about which ones need generative AI — three
 | **C4** | Extract to schema | Per-type JSON schema with per-field confidence and per-field provenance | **Generative**, constrained output |
 | **C5** | Reason & answer | Plan the question, retrieve, re-read pixels when needed, synthesize with citations, or abstain | **Agentic** |
 | **C6** | Act & escalate | Propose a next step, open a review task, emit structured output downstream | Whitelisted, logged tools |
+| **C7** | Govern | Refuse prohibited inferences, classify high-risk use, enforce the autonomy ceiling, disclose, record | **Deterministic**, on the request path |
+
+C7 is a capability rather than a policy document on purpose. Compliance that lives in a wiki is advisory; compliance that lives in the request path can refuse. It is also deliberately rule-based: a gate must be inspectable, replayable and stable across releases, and a model that occasionally refuses differently is worse than no gate at all.
 
 ### What can be extracted directly vs. what requires reasoning
 
@@ -119,6 +124,18 @@ Autonomy is a dial, not a property of the system. Each level is earned with meas
 
 Two planes. **Ingestion runs once per document; the query plane runs many times per document.** Separating them is the central structural decision.
 
+### The ingestion plane is a medallion
+
+We describe the ingestion layers as **Bronze → Silver → Gold**, because the shape is already familiar to anyone who has built a data platform and because it names the one thing that matters here: what is preserved at each layer.
+
+| Layer | Holds | Why it exists |
+|---|---|---|
+| **Bronze** | The page images, immutable, with sha256, dimensions and a scan-quality score | The pixels. Never discarded, never overwritten, always available to be read again |
+| **Silver** | Normalized **Markdown** in reading order, plus blocks and tables, **each carrying a bounding box** | One canonical representation regardless of whether the source was a scan, a photo or a spreadsheet |
+| **Gold** | Validated schema fields with confidence, provenance and validator verdicts; the retrieval index | The queryable, aggregable surface — and the only layer a query touches directly |
+
+Markdown is the canonical Silver artifact: a single text representation that every downstream component agrees on. The critical detail, and the thing that distinguishes this from a conventional document pipeline, is that **Silver carries coordinates**. A Markdown-only Silver layer severs the link back to Bronze, and once that link is gone no amount of downstream cleverness recovers it — citation, visual verification and the pixel re-read all become impossible.
+
 ### Ingestion plane — batch
 
 ```
@@ -133,12 +150,14 @@ Two planes. **Ingestion runs once per document; the query plane runs many times 
      ┌──────────────────┬────────────────────────┬──────────────────────┬────────────────────┘
      ▼                  ▼                        ▼                      ▼
 ┌──────────┐  ┌───────────────────┐  ┌──────────────────────┐  ┌──────────────┐
+│ BRONZE   │  │ SILVER            │  │ GOLD                 │  │ GOLD         │
 │ Page     │  │ Document record   │  │ Hybrid index         │  │ Field store  │
-│ images   │  │ text, tables,     │  │ BM25 + embeddings    │  │ SQL — exact, │
+│ images   │  │ markdown, tables, │  │ BM25 + embeddings    │  │ SQL — exact, │
 │ (object  │  │ fields, bboxes,   │  │ + metadata filters   │  │ cheap,       │
 │  store)  │  │ confidences       │  │                      │  │ aggregable   │
 └──────────┘  └───────────────────┘  └──────────────────────┘  └──────────────┘
-   the pixels are never discarded
+   the pixels are       coordinates survive
+   never discarded      normalization
 ```
 
 The artifact produced is a **Document Intelligence Record**: normalized text in reading order, tables as structured JSON, extracted fields with confidence, and a bounding box for every block and every field — plus a pointer to the page images.
@@ -148,9 +167,14 @@ The artifact produced is a **Document Intelligence Record**: normalized text in 
 ### Query plane — on demand
 
 ```
-  question ──▶ ┌──────────────┐
-               │ Orchestrator │  classifies intent (lookup / aggregate / compare / infer / act),
-               │   (planner)  │  plans the route, decides when it has enough
+  question ──▶ ┌──────────────────┐
+               │ EU AI Act gate   │  deterministic. Art. 5 prohibited-inference refusal,
+               │   (pre-flight)   │  Annex III high-risk classification, Art. 14 autonomy
+               └──────┬───────────┘  ceiling. Runs before any model, so a refusal costs nothing
+                      ▼
+               ┌──────────────┐
+               │ Orchestrator │  classifies intent (lookup / aggregate / compare / infer / act)
+               │   (planner)  │  and complexity, plans the route, decides when it has enough
                └──────┬───────┘
                       │ selects among tools
       ┌───────────────┼──────────────────┬─────────────────────┐
@@ -163,12 +187,16 @@ The artifact produced is a **Document Intelligence Record**: normalized text in 
 └─────┬─────┘  └──────┬───────┘  └───────┬────────┘  └──────┬────────┘
       └───────────────┴──────────────────┴──────────────────┘
                       ▼
-            ┌──────────────────┐     ┌──────────────┐
-            │ Synthesizer      │────▶│ Verifier     │────▶ answer + citations
-            │ answer + per-    │     │ claim-level  │        or ABSTAIN
-            │ claim citations  │     │ grounding    │        → human review queue
-            └──────────────────┘     └──────────────┘
+            ┌──────────────────┐     ┌──────────────┐     ┌──────────────────┐
+            │ Synthesizer      │────▶│ Verifier     │────▶│ EU AI Act gate   │──▶ answer
+            │ answer + per-    │     │ claim-level  │     │  (post-flight)   │    + citations
+            │ claim citations  │     │ grounding    │     │ disclosure, data │    or ABSTAIN
+            └──────────────────┘     └──────────────┘     │ minimisation,    │    → human queue
+                                                          │ oversight check  │
+                                                          └──────────────────┘
 ```
+
+The post-flight gate is not a disclaimer generator. Art. 14 human oversight is only meaningful if there is something for a human to check, so an answer whose claims carry no citable region is **blocked there** rather than released with a warning.
 
 ### Component responsibilities
 
@@ -251,7 +279,9 @@ Confidence-distribution and abstention-rate shift; per-document OCR quality tren
 | **PII leakage / wrong-eyes access** | Regulated data, real customers | Redaction at ingest of PII not needed downstream; ACL filters applied pre-retrieval; EU residency; no client data into training; retention limits |
 | **Silent degradation** | A new scanner or layout quietly drops accuracy | Nightly canary replay, drift alerts, layout-novelty detection |
 | **Over-trust by users** | Confident prose stops being checked | Evidence shown by default, confidence surfaced, abstentions made visible rather than hidden |
-| **Cost blow-up** | Frontier VLM on every page of every query | Pre-processing, cheap structured path for lookups, expensive path only on escalation |
+| **Cost blow-up** | Frontier VLM on every page of every query | Pre-processing; complexity-tiered models so cheap questions get a cheap model; escalation only when confidence is actually low |
+| **Role and entitlement drift** | In a bank, *who may see which document* changes constantly, and a stale entitlement is a data breach with an audit trail | Entitlements resolved at query time from the identity provider, never cached in the index; ACL filters applied **pre-retrieval**; every access written to the trace |
+| **Scalability and resilience** | Ingestion is batchy and bursty, and the model gateway is a third-party dependency that will have bad days | Ingestion is an idempotent queue keyed on sha256, so a failed batch is replayed rather than reconciled; per-stage retries with backoff; the query plane degrades to the structured path when the gateway is unavailable, answering lookups and abstaining on reasoning rather than failing closed entirely |
 
 ### Observability
 

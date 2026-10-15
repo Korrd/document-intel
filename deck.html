@@ -19,8 +19,12 @@
   .slide{
     position:absolute; inset:0; display:none;
     padding:5.5vh 6vw 9vh; flex-direction:column;
-    animation:in .28s ease both;
+    /* No fill mode on purpose: if the animation never runs (reduced-motion, a
+       headless capture, an odd projector browser) the slide must still be at
+       its natural opacity rather than stuck at the keyframe's opacity:0. */
+    animation:in .28s ease;
   }
+  @media (prefers-reduced-motion:reduce){ .slide{animation:none} }
   .slide.on{display:flex}
   @keyframes in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 
@@ -187,7 +191,7 @@
   <h2>Two planes: <em>ingestion</em> once, <em>query</em> many times.</h2>
   <div style="display:flex;flex-direction:column;gap:clamp(8px,1vw,16px);flex:1;min-height:0">
     <div class="plane">
-      <div class="t">Ingestion plane — batch, runs once per document</div>
+      <div class="t">Ingestion plane — bronze → silver → gold, runs once per document</div>
       <div class="row">
         <div class="box det">Intake<small>hash, dedupe, split, deskew, quality score</small></div><div class="arr">→</div>
         <div class="box ai">Vision agent<small>layout, reading order, tables, bboxes</small></div><div class="arr">→</div>
@@ -196,23 +200,25 @@
         <div class="box det">Validators<small>IBAN checksum, totals, dates, cross-field</small></div>
       </div>
       <div class="store">
-        <div class="box">Page images<small>object store — the pixels are never discarded</small></div>
-        <div class="box">Document record<small>text, tables, fields, bboxes, confidences</small></div>
-        <div class="box">Hybrid index<small>BM25 + embeddings + metadata filters</small></div>
-        <div class="box">Field store<small>SQL — exact, cheap, aggregable</small></div>
+        <div class="box"><b style="color:#c48b4a">BRONZE</b> page images<small>the pixels — never discarded</small></div>
+        <div class="box"><b style="color:#b8c0d0">SILVER</b> document record<small>markdown + tables + <b>bboxes survive</b></small></div>
+        <div class="box"><b style="color:#d9b45b">GOLD</b> hybrid index<small>BM25 + embeddings + filters</small></div>
+        <div class="box"><b style="color:#d9b45b">GOLD</b> field store<small>SQL — exact, cheap, aggregable</small></div>
       </div>
     </div>
     <div class="plane" style="border-color:#a100ff55">
       <div class="t">Query plane — on demand, per question</div>
       <div class="row">
-        <div class="box ai">Orchestrator<small>classifies intent, plans the route</small></div><div class="arr">→</div>
+        <div class="box det">EU AI Act gate<small>refuse · classify risk · cap autonomy</small></div><div class="arr">→</div>
+        <div class="box ai">Orchestrator<small>intent + complexity → model tier</small></div><div class="arr">→</div>
         <div class="box det">SQL lookup<small>exact fields &amp; aggregation</small></div>
         <div class="box det">Hybrid retrieval<small>+ rerank, ACL-filtered</small></div>
         <div class="box ai">Pixel re-read<small>crops the page, looks again</small></div>
         <div class="box det">Compute tool<small>all arithmetic — never the LLM</small></div>
         <div class="arr">→</div>
         <div class="box ai">Synthesizer<small>answer + citations</small></div><div class="arr">→</div>
-        <div class="box ai">Verifier<small>claim-level grounding gate</small></div>
+        <div class="box ai">Verifier<small>claim-level grounding gate</small></div><div class="arr">→</div>
+        <div class="box det">Post-flight<small>disclose · minimise · block uncited</small></div>
       </div>
     </div>
   </div>
@@ -320,6 +326,8 @@
     <tr><td><b>PII leakage / wrong-eyes access</b></td><td>Regulated data, real customers</td><td>Redaction at ingest, ACL filters pre-retrieval, EU residency, no training on client data, retention limits</td></tr>
     <tr><td><b>Silent degradation</b></td><td>A new scanner or layout quietly drops accuracy</td><td>Nightly canary replay, drift alerts, layout-novelty detection</td></tr>
     <tr><td><b>Over-trust by users</b></td><td>Confident prose stops getting checked</td><td>Evidence shown by default, confidence surfaced, visible abstentions</td></tr>
+    <tr><td><b>Role &amp; entitlement drift</b></td><td>Who may see which document changes constantly; a stale entitlement is a breach with an audit trail</td><td>Entitlements resolved per query from the IdP, never cached in the index; ACLs applied pre-retrieval; every access traced</td></tr>
+    <tr><td><b>Scalability &amp; resilience</b></td><td>Ingestion is bursty and the model gateway is a third party that will have bad days</td><td>Idempotent queue keyed on sha256 so batches replay; per-stage backoff; query plane degrades to the structured path and abstains rather than failing entirely</td></tr>
   </table>
 </section>
 
@@ -355,6 +363,46 @@
 
 <!-- 12 -->
 <section class="slide">
+  <div class="kicker">Built &amp; measured</div>
+  <h2>We built the thin slice. <em>Here are the numbers.</em></h2>
+  <div class="grid g4" style="flex:0 0 auto">
+    <div class="card hi"><h3>Field extraction</h3>
+      <p style="font-size:clamp(22px,3vw,44px);font-weight:800;color:var(--fg);line-height:1">96.9%</p>
+      <p>exact match, 31/32 fields · numerics 24/25</p></div>
+    <div class="card hi"><h3>Correct abstention</h3>
+      <p style="font-size:clamp(22px,3vw,44px);font-weight:800;color:var(--ok);line-height:1">2/2</p>
+      <p>on deliberately unanswerable questions</p></div>
+    <div class="card"><h3>Citation coverage</h3>
+      <p style="font-size:clamp(22px,3vw,44px);font-weight:800;color:var(--fg);line-height:1">100%</p>
+      <p>every released claim resolves to a page region · groundedness 90%</p></div>
+    <div class="card"><h3>Unit economics</h3>
+      <p style="font-size:clamp(22px,3vw,44px);font-weight:800;color:var(--fg);line-height:1">$0.013</p>
+      <p>per question, ~9s · $0.08 per document ingested</p></div>
+  </div>
+  <div class="grid g3" style="margin-top:clamp(8px,1vw,16px)">
+    <div class="card"><h3>What the demo proves</h3><ul>
+      <li>Cross-document validation caught a <b>planted defect</b>: the monthly payment is 1.284,36 in the contract and 1.248,36 in the deed</li>
+      <li>The delta was computed by a <b>calculator</b>, not the model</li>
+      <li>Click any claim → the exact region of the page highlights</li>
+      <li>"What is her phone number?" → <b>abstains</b> and queues a crop for review</li>
+    </ul></div>
+    <div class="card"><h3>The gate works</h3><ul>
+      <li>Prohibited-inference requests are <b>refused before any model runs</b> — a refusal costs $0.00</li>
+      <li>A creditworthiness question is classified <b>Annex III high-risk</b> and marked advisory-only</li>
+      <li>3/3 on the policy suite</li>
+      <li>An uncited claim is <b>blocked</b>, not warned about</li>
+    </ul></div>
+    <div class="card"><h3>Honest limits</h3><ul>
+      <li>3 synthetic documents, not 300 real ones — the harness is built to take them</li>
+      <li>BM25 only; no embeddings or reranker yet</li>
+      <li>Verifier shares a model family with the synthesizer → correlated failure risk</li>
+      <li>Cost figures are computed from token counts, not invoices</li>
+    </ul></div>
+  </div>
+</section>
+
+<!-- 13 -->
+<section class="slide">
   <div class="kicker">5 · Phase 2 &amp; close</div>
   <h2>What earns phase two.</h2>
   <div class="grid g2">
@@ -383,7 +431,7 @@
 
 <script>
   const s=[...document.querySelectorAll('.slide')];
-  const labels=["Title","Situation","Scope","Capabilities","Autonomy","Architecture","Pixels","AI seam","Trust","Failure modes","MVP","Phase 2"];
+  const labels=["Title","Situation","Scope","Capabilities","Autonomy","Architecture","Pixels","AI seam","Trust","Failure modes","MVP","Measured","Phase 2"];
   let i=0; const t=document.getElementById('t'); t.textContent=s.length;
   function go(k){
     i=Math.max(0,Math.min(s.length-1,k));

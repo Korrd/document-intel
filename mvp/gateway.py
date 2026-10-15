@@ -33,6 +33,10 @@ _TOKEN_TTL = 240.0
 
 USER_AGENT = os.environ.get("DI_USER_AGENT", "curl/8.7.1")
 
+# Models this gateway will not let us force into a tool call. Learned at
+# runtime on the first refusal, so the fallback is paid for once per process.
+_NO_FORCED_TOOLS = set()
+
 # Rough per-million-token prices (USD) purely so the demo can show a cost dial.
 _PRICES = {FAST: (1.0, 5.0), MAIN: (3.0, 15.0), STRONG: (15.0, 75.0)}
 
@@ -165,12 +169,34 @@ def json_of(resp, tool_name=None):
 
 def structured(content, schema, name, description, model=None, system=None,
                max_tokens=4096):
-    """Force a schema-valid object out of the model via a single-tool call."""
-    resp = complete(content, model=model, system=system, max_tokens=max_tokens,
-                    tools=[{"name": name, "description": description,
-                            "input_schema": schema}],
-                    tool_choice={"type": "tool", "name": name})
-    return json_of(resp, tool_name=name)
+    """Get a schema-valid object out of the model.
+
+    Preferred path is a forced single-tool call, which makes the schema binding.
+    Not every model behind this gateway supports it -- some are routed via
+    Vertex, which rejects tool_choice type "tool"/"any" outright. Those models
+    are remembered after the first refusal and served by a JSON-instruction
+    fallback instead, so a tier swap never breaks a caller.
+    """
+    model = model or MAIN
+    if model not in _NO_FORCED_TOOLS:
+        try:
+            resp = complete(content, model=model, system=system, max_tokens=max_tokens,
+                            tools=[{"name": name, "description": description,
+                                    "input_schema": schema}],
+                            tool_choice={"type": "tool", "name": name})
+            return json_of(resp, tool_name=name)
+        except GatewayError as exc:
+            if "tool_choice" not in str(exc):
+                raise
+            _NO_FORCED_TOOLS.add(model)
+
+    blocks = list(content) if isinstance(content, list) \
+        else [{"type": "text", "text": content}]
+    blocks.append({"type": "text", "text":
+                   "Respond with ONLY a JSON object conforming to this schema. No "
+                   "prose, no code fence, no explanation.\n\n%s"
+                   % json.dumps(schema, ensure_ascii=False)})
+    return json_of(complete(blocks, model=model, system=system, max_tokens=max_tokens))
 
 
 def usage_report():

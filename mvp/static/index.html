@@ -54,6 +54,18 @@
   .status.answered_with_caveat{background:#3a2c0e;color:#ffd083}
   .status.abstained{background:#3d1620;color:#ff9aa6}
   .status.error{background:#3d1620;color:#ff9aa6}
+  .status.refused_by_policy{background:#3d1620;color:#ff9aa6}
+
+  .gate{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;
+        padding:7px 10px;margin-top:10px;font-size:11.5px;background:var(--panel2)}
+  .gate .k{font-size:9.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;
+           padding:2px 7px;border-radius:5px;white-space:nowrap}
+  .gate.allowed .k{background:#123a2e;color:#6ee7bf}
+  .gate.allowed_with_obligations .k{background:#3a2c0e;color:#ffd083}
+  .gate.refused .k{background:#3d1620;color:#ff9aa6}
+  .gate .d{color:var(--dim);line-height:1.4}
+  .arts{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+  .arts span{font-size:10px;border:1px solid var(--line);border-radius:5px;padding:2px 6px;color:var(--dim)}
 
   .answer{border:1px solid var(--line);border-radius:11px;padding:14px;background:var(--panel);margin-top:12px}
   .answer .body{font-size:14.5px;line-height:1.6;margin-top:11px;white-space:pre-wrap}
@@ -142,6 +154,8 @@ const SUGGESTIONS = [
   ["Compare — finds a defect",   "¿Coincide la cuota mensual entre el contrato de préstamo y la escritura notarial?"],
   ["Aggregate — needs maths",    "¿Cuánto se pagó en comisiones en julio y qué porcentaje representa sobre el total de cargos del periodo?"],
   ["Unanswerable — must abstain","¿Cuál es el número de teléfono de contacto de la titular?"],
+  ["EU AI Act — refused at the gate","¿Cuál es la etnia de la titular según los documentos?"],
+  ["EU AI Act — high-risk, human required","Evalúa la solvencia de la titular para concederle un nuevo crédito"],
 ];
 
 // ------------------------------------------------------------------ corpus ---
@@ -203,9 +217,23 @@ function renderAnswer(r){
   const p = r.plan || {}, c = r.cost || {};
   const claims = [...(r.claims||[]), ...(r.dropped_claims||[])];
 
+  const pre = (r.policy||{}).preflight || r.policy || {};
+  const post = (r.policy||{}).postflight || {};
+
   let h = `<div class="answer">
     <span class="status ${esc(r.status)}">${esc((r.status||'').replace(/_/g,' '))}</span>
     <div class="body">${esc(r.answer)}</div>`;
+
+  if(pre.decision){
+    h += `<div class="gate ${esc(pre.decision)}">
+       <span class="k">EU AI Act · ${esc(pre.decision.replace(/_/g,' '))}</span>
+       <span class="d">${esc(pre.reason)}${pre.risk_tier? ' · risk tier: '+esc(pre.risk_tier):''}</span></div>`;
+    if((pre.articles||[]).length) h += `<div class="arts">${pre.articles.map(a=>`<span>${esc(a)}</span>`).join('')}</div>`;
+    (post.flags||[]).forEach(f => {
+      h += `<div class="note ${f.severity==='blocking'?'bad':(f.severity==='review'?'warn':'ok')}">
+        <b>${esc(f.flag.replace(/_/g,' '))}</b>${esc(f.detail)}</div>`;
+    });
+  }
 
   if(r.inconsistency) h += `<div class="note bad"><b>inconsistency detected</b>${esc(r.inconsistency)}</div>`;
   if(r.injection_noticed) h += `<div class="note warn"><b>prompt-injection attempt in document content</b>${esc(r.injection_noticed)}</div>`;
@@ -225,10 +253,14 @@ function renderAnswer(r){
   }
 
   const steps = (r.trace||[]).map(t => `<span>${esc(t.step)} <b>${t.ms}ms</b></span>`).join('');
+  const tierNote = (r.complexity && r.complexity_rated && r.complexity !== r.complexity_rated)
+    ? ` <span style="color:var(--warn)">(floored from ${esc(r.complexity_rated)})</span>` : '';
   h += `<h2 class="t" style="margin-top:16px">Trace — the compliance artifact</h2>
     <div class="muted"><b style="color:var(--a2)">${esc(p.intent||'?')}</b> · ${esc(p.reasoning||'')}</div>
     <div class="trace">${steps}</div>
-    <div class="trace"><span>verifier <b>${esc((r.verifier||{}).verdict||'-')}</b></span>
+    <div class="trace"><span>complexity <b>${esc(r.complexity||'-')}</b>${tierNote}</span>
+      <span>synth model <b>${esc((r.models||{}).synthesizer||'-').replace('claude-','')}</b></span>
+      <span>verifier <b>${esc((r.verifier||{}).verdict||'-')}</b></span>
       <span>total <b>${r.elapsed_ms}ms</b></span>
       <span>calls <b>${c.calls||0}</b></span>
       <span>tokens <b>${(c.input_tokens||0)+(c.output_tokens||0)}</b></span>

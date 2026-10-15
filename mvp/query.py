@@ -19,6 +19,7 @@ import time
 
 import gateway
 import imaging
+import policy
 import store
 import validators
 
@@ -27,6 +28,43 @@ CROPS = store.DATA / "crops"
 
 CONFIDENCE_FLOOR = 0.80      # below this, escalate to a pixel re-read
 MAX_ESCALATIONS = 1          # one rung of the ladder per question, for latency
+
+# Complexity -> model tier. Adopted from the team's difficulty-based router: the
+# planner judges how hard the question is, and cheap questions get a cheap model.
+# Two deliberate exceptions, both principled:
+#   - the verifier always runs on MAIN. It is the gate; we do not economise on
+#     the gate.
+#   - the pixel re-read always runs on STRONG. It only fires when the cheap pass
+#     was already unsure, so using a cheap model there would be pointless.
+TIER_BY_COMPLEXITY = {
+    "trivial": gateway.FAST,
+    "easy": gateway.FAST,
+    "moderate": gateway.MAIN,
+    "complex": gateway.MAIN,
+}
+
+# A model rating its own task difficulty is not trustworthy on its own: the
+# planner rated a cross-document comparison "easy", the cheap tier took it, and
+# the verifier dropped one of its claims. Some intents are definitionally not
+# easy -- reconciling several documents is multi-source reasoning whatever the
+# planner thinks -- so a deterministic floor overrides the self-assessment.
+COMPLEXITY_ORDER = ["trivial", "easy", "moderate", "complex"]
+COMPLEXITY_FLOOR_BY_INTENT = {
+    "compare": "moderate",
+    "aggregate": "moderate",
+    "act": "moderate",
+}
+
+
+def effective_complexity(plan):
+    """The planner's rating, raised to the floor its intent demands."""
+    rated = plan.get("complexity") or "moderate"
+    if rated not in COMPLEXITY_ORDER:
+        rated = "moderate"
+    floor = COMPLEXITY_FLOOR_BY_INTENT.get(plan.get("intent"))
+    if floor and COMPLEXITY_ORDER.index(rated) < COMPLEXITY_ORDER.index(floor):
+        return floor, rated
+    return rated, rated
 
 # ------------------------------------------------------------ compute tool ----
 _OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -66,13 +104,26 @@ each other.
 - compute: the answer needs arithmetic. Arithmetic is done by a calculator, not \
 by a model.
 Set needs_pixel_reread when the answer hinges on reading a small or unclear \
-printed detail precisely (an identifier, a digit, a stamp, a signature)."""
+printed detail precisely (an identifier, a digit, a stamp, a signature).
+
+Also rate the complexity honestly. It selects which model answers: cheap for \
+easy questions, expensive for hard ones. Over-rating burns money on trivia; \
+under-rating risks a wrong answer on something that mattered."""
 
 PLAN_SCHEMA = {
     "type": "object",
     "properties": {
         "intent": {"type": "string",
                    "enum": ["lookup", "aggregate", "compare", "infer", "act", "out_of_scope"]},
+        "complexity": {"type": "string",
+                       "enum": ["trivial", "easy", "moderate", "complex"],
+                       "description": "How hard is this to answer correctly? trivial/easy "
+                                      "= one value from one place. moderate = a few pieces "
+                                      "of evidence or prose to interpret. complex = several "
+                                      "documents, conflicting evidence, or multi-step "
+                                      "reasoning. This selects the model tier, so be honest: "
+                                      "over-rating wastes money, under-rating risks a wrong "
+                                      "answer."},
         "restated": {"type": "string", "description": "The question restated precisely."},
         "field_names": {"type": "array", "items": {"type": "string"},
                         "description": "Field-store fields to look up, from the available list."},
@@ -84,8 +135,8 @@ PLAN_SCHEMA = {
         "needs_pixel_reread": {"type": "boolean"},
         "reasoning": {"type": "string", "description": "One sentence on the route chosen."},
     },
-    "required": ["intent", "restated", "field_names", "search_queries", "doc_ids",
-                 "needs_compute", "needs_pixel_reread", "reasoning"],
+    "required": ["intent", "complexity", "restated", "field_names", "search_queries",
+                 "doc_ids", "needs_compute", "needs_pixel_reread", "reasoning"],
 }
 
 SYNTH_SYSTEM = """You are the synthesis agent of a document intelligence system for \
@@ -206,7 +257,7 @@ def _crop_for(doc_id, bbox, tag):
 def _pixel_reread(question, candidates):
     """Escalation rung: crop the cited region and look again with a stronger model."""
     results = []
-    for cand in candidates[:2]:
+    for cand in candidates[:MAX_ESCALATIONS]:
         crop_path = _crop_for(cand["doc_id"], cand["bbox"], "reread")
         if not crop_path:
             continue
@@ -260,20 +311,39 @@ def answer(question, doc_ids=None, model=None):
         return dict(status="error", answer="No documents ingested yet. Run pipeline.py.",
                     claims=[], trace=trace)
 
+    # 0. EU AI Act gate --------------------------------------------------------
+    # Deterministic, and it runs before anything else. A refusal here never
+    # reaches a model, so it costs nothing and cannot be talked around.
+    gate = step("policy_preflight", lambda: policy.preflight(question))
+    if not gate["allowed"]:
+        return dict(status="refused_by_policy", answer=gate["reason"],
+                    claims=[], evidence={}, policy=gate, plan=None,
+                    trace=trace, elapsed_ms=int((time.time() - t0) * 1000),
+                    cost=_cost_delta(usage_before))
+
     # 1. plan ------------------------------------------------------------------
+    # The planner is a classification task, so it runs on the cheap tier.
     plan = step("orchestrator_plan", lambda: gateway.structured(
         "Question: %s\n\nDocuments available:\n%s\n\nField-store fields available:\n%s"
         % (question,
            "\n".join("- %s (%s): %s" % (d, t, n) for d, t, n in docs),
            ", ".join(available)),
         PLAN_SCHEMA, "query_plan", "Route for answering a document question.",
-        model=model or gateway.MAIN, system=PLAN_SYSTEM, max_tokens=1200))
+        model=model or gateway.FAST, system=PLAN_SYSTEM, max_tokens=1200))
+
+    complexity, rated = effective_complexity(plan)
+    synth_model = model or TIER_BY_COMPLEXITY.get(complexity, gateway.MAIN)
+    if complexity != rated:
+        trace.append(dict(step="complexity_floor", ms=0,
+                          detail="intent '%s' floors complexity at '%s' (planner rated "
+                                 "'%s')" % (plan.get("intent"), complexity, rated)))
 
     if plan.get("intent") == "out_of_scope":
         return dict(status="abstained", answer=
                     "That question is outside what these documents cover, so I will not "
                     "answer it from them.", plan=plan, claims=[], evidence={},
-                    trace=trace, elapsed_ms=int((time.time() - t0) * 1000),
+                    policy=gate, trace=trace,
+                    elapsed_ms=int((time.time() - t0) * 1000),
                     cost=_cost_delta(usage_before))
 
     scope = doc_ids or plan.get("doc_ids") or None
@@ -300,8 +370,15 @@ def answer(question, doc_ids=None, model=None):
     weak = [f for f in fields
             if f["confidence"] is not None and f["confidence"] < CONFIDENCE_FLOOR
             and f["bbox"]]
+    # The planner asks for a pixel re-read whenever an identifier is involved,
+    # which is the right instinct but the wrong trigger on its own: if the cheap
+    # pass already produced a high-confidence value that a deterministic rule
+    # then validated, re-reading the pixels with an expensive model buys nothing.
+    # Escalate because we are unsure, not because we were asked.
+    settled = [f for f in fields
+               if f["confidence"] is not None and f["confidence"] >= 0.95]
     reread = None
-    if plan.get("needs_pixel_reread") or weak:
+    if weak or (plan.get("needs_pixel_reread") and not settled):
         cands = [dict(doc_id=f["doc_id"], bbox=f["bbox"],
                       reason="field %s confidence %.2f" % (f["name"], f["confidence"]))
                  for f in weak]
@@ -312,7 +389,7 @@ def answer(question, doc_ids=None, model=None):
         if cands:
             reread = step("tool_pixel_reread",
                           lambda: _pixel_reread(question, cands),
-                          crops=len(cands[:2]))
+                          crops=len(cands[:MAX_ESCALATIONS]))
 
     # 4. synthesize ------------------------------------------------------------
     evidence = _evidence_payload(fields, blocks, reread)
@@ -320,7 +397,8 @@ def answer(question, doc_ids=None, model=None):
         "Question: %s\n\nEvidence:\n%s"
         % (question, json.dumps(evidence, ensure_ascii=False, indent=1)[:60000]),
         SYNTH_SCHEMA, "grounded_answer", "An answer grounded in cited evidence.",
-        model=model or gateway.MAIN, system=SYNTH_SYSTEM, max_tokens=3000))
+        model=synth_model, system=SYNTH_SYSTEM, max_tokens=3000),
+        complexity=complexity, model=synth_model)
 
     claims = synth.get("claims") or []
     computations = _apply_compute(claims)
@@ -341,17 +419,33 @@ def answer(question, doc_ids=None, model=None):
             VERIFY_SCHEMA, "verification", "Claim-level grounding verdict.",
             model=model or gateway.MAIN, system=VERIFY_SYSTEM, max_tokens=2000))
 
-    grounded_flags = {c["index"]: c for c in (verdict.get("claims") or [])}
+    # A schema does not guarantee a well-formed response: the verifier has
+    # returned `claims` as a list of strings. Parse defensively, and if nothing
+    # usable comes back, fail closed -- an unverified answer is not a verified
+    # one, so it must not ship as "answered".
+    grounded_flags = {}
+    for entry in (verdict.get("claims") or []):
+        if isinstance(entry, dict) and isinstance(entry.get("index"), int):
+            grounded_flags[entry["index"]] = entry
+    verifier_ran = bool(grounded_flags) or not claims
+    if claims and not verifier_ran:
+        verdict = dict(verdict, verdict="unverified",
+                       note="Verifier returned an unusable response (%s). Failing "
+                            "closed." % type(verdict.get("claims")).__name__)
+
     for i, c in enumerate(claims):
         v = grounded_flags.get(i, {})
-        c["grounded"] = bool(v.get("grounded", True))
-        c["verifier_reason"] = v.get("reason", "")
+        # Conservative default: a claim the verifier did not cover is not a
+        # claim the verifier approved.
+        c["grounded"] = bool(v.get("grounded", False)) if verifier_ran else False
+        c["verifier_reason"] = v.get("reason", "") if verifier_ran \
+            else "verifier did not return a usable verdict for this claim"
         c["citations"] = _citations(c)
 
     ungrounded = [c for c in claims if not c["grounded"]]
 
     # 6. the fallback ladder ---------------------------------------------------
-    if (not synth.get("sufficient") or verdict.get("verdict") == "fail" or
+    if (not synth.get("sufficient") or verdict.get("verdict") in ("fail", "unverified") or
             (ungrounded and len(ungrounded) == len(claims))):
         status = "abstained"
     elif ungrounded or verdict.get("verdict") == "partial":
@@ -359,8 +453,20 @@ def answer(question, doc_ids=None, model=None):
     else:
         status = "answered"
 
+    # 7. EU AI Act post-flight -------------------------------------------------
+    # Art. 14 is not satisfied by a disclaimer: if a released claim cites
+    # nothing, there is nothing for a human to oversee, so the gate blocks it.
+    post = step("policy_postflight",
+                lambda: policy.postflight(gate, synth.get("answer") or "", claims, status))
+    if not post["released"]:
+        status = "abstained"
+
     out = dict(
         status=status,
+        policy=dict(preflight=gate, postflight=post),
+        complexity=complexity, complexity_rated=rated,
+        models=dict(planner=gateway.FAST, synthesizer=synth_model,
+                    verifier=model or gateway.MAIN),
         answer=synth.get("answer") if status != "abstained" else _abstention_text(synth),
         missing=synth.get("missing"),
         claims=[c for c in claims if c["grounded"]] if status == "answered_with_caveat" else claims,
@@ -435,7 +541,13 @@ if __name__ == "__main__":
     print("\nQ: %s" % q)
     print("STATUS: %s   (%d ms, %d calls, $%.4f)"
           % (r["status"], r["elapsed_ms"], r["cost"]["calls"], r["cost"]["usd"]))
-    print("PLAN: %s -> %s" % (r.get("plan", {}).get("intent"), r.get("plan", {}).get("reasoning")))
+    pol = (r.get("policy") or {}).get("preflight") or r.get("policy") or {}
+    if pol:
+        print("POLICY: %s | tier=%s | %s"
+              % (pol.get("decision"), pol.get("risk_tier"), ", ".join(pol.get("triggered") or []) or "-"))
+    plan = r.get("plan") or {}
+    print("PLAN: %s/%s -> %s" % (plan.get("intent"), plan.get("complexity"),
+                                 plan.get("reasoning")))
     print("\n%s\n" % r["answer"])
     for c in r.get("claims", []):
         mark = "ok " if c.get("grounded") else "DROP"
