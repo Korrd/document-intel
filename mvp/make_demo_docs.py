@@ -191,7 +191,7 @@ DOCUMENTS.append(dict(
         principal=245000.00,
         term_months=300,
         rate_type="variable",
-        spread="EURIBOR 12M + 0,89%",
+        spread="0,89%",
         monthly_payment=1284.36,
         apr="2,71%",
         early_repayment_penalty="0,25% during first 3 years, none thereafter",

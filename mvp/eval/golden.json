@@ -1,0 +1,95 @@
+[
+  {
+    "id": "q1",
+    "intent": "lookup",
+    "question": "¿Cuál es el IBAN de la cuenta del extracto bancario?",
+    "must_contain": [
+      "ES9121000418450200051332"
+    ],
+    "must_cite": true
+  },
+  {
+    "id": "q2",
+    "intent": "lookup",
+    "question": "¿Cuál es el capital concedido en el contrato de préstamo?",
+    "must_contain": [
+      "245.000",
+      "245000"
+    ],
+    "any_of": true,
+    "must_cite": true
+  },
+  {
+    "id": "q3",
+    "intent": "infer",
+    "question": "¿Existe penalización por amortización anticipada? ¿De cuánto?",
+    "must_contain": [
+      "0,25",
+      "0.25"
+    ],
+    "any_of": true,
+    "must_cite": true
+  },
+  {
+    "id": "q4",
+    "intent": "infer",
+    "question": "¿Qué ocurre si dejo de pagar dos cuotas consecutivas?",
+    "must_contain": [
+      "vencimiento anticipado"
+    ],
+    "must_cite": true
+  },
+  {
+    "id": "q5",
+    "intent": "compare",
+    "question": "¿Coincide la cuota mensual entre el contrato de préstamo y la escritura notarial?",
+    "must_contain": [
+      "no"
+    ],
+    "must_detect_inconsistency": true,
+    "must_cite": true
+  },
+  {
+    "id": "q6",
+    "intent": "aggregate",
+    "question": "¿Cuál fue el total de comisiones del periodo en el extracto?",
+    "must_contain": [
+      "116,25",
+      "116.25"
+    ],
+    "any_of": true,
+    "must_cite": true
+  },
+  {
+    "id": "q7",
+    "intent": "lookup",
+    "question": "¿Está firmado y sellado el contrato de préstamo?",
+    "must_contain": [
+      "s"
+    ],
+    "must_cite": true
+  },
+  {
+    "id": "q8",
+    "intent": "lookup",
+    "question": "¿Cuál es el valor de tasación de la finca?",
+    "must_contain": [
+      "352.000",
+      "352000"
+    ],
+    "any_of": true,
+    "must_cite": true
+  },
+  {
+    "id": "u1",
+    "intent": "unanswerable",
+    "question": "¿Cuál es el número de teléfono de contacto de la titular?",
+    "must_abstain": true
+  },
+  {
+    "id": "u2",
+    "intent": "unanswerable",
+    "question": "¿Cuál era el saldo de la cuenta en diciembre de 2025?",
+    "must_abstain": true
+  }
+]

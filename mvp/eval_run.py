@@ -32,6 +32,19 @@ GOLDEN = ROOT / "eval" / "golden.json"
 MANIFEST = ROOT / "docs" / "manifest.json"
 
 
+def soft(v):
+    """Lowercase and strip accents, but PRESERVE digits and separators.
+
+    Used for substring assertions against free-text answers. `norm` below
+    collapses punctuation, which is right for comparing two single values and
+    wrong for finding "245.000" inside a sentence -- it turned the needle into
+    "245.00" and the haystack into "245 000 00".
+    """
+    s = unicodedata.normalize("NFKD", str(v or "").lower())
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", s).strip()
+
+
 def norm(v):
     """Compare values the way a human would: ignore case, accents, currency,
     and European vs. plain number formatting."""
@@ -68,6 +81,12 @@ def eval_fields():
             got = got_f.get("value") if isinstance(got_f, dict) else None
             conf = got_f.get("confidence") if isinstance(got_f, dict) else None
             exp_n, got_n = norm(expected), norm(got)
+            # A date is the same date however it is formatted. The extractor is
+            # told to copy verbatim, so it returns 31/07/2026 where the ground
+            # truth is ISO -- that is a formatting difference, not an error.
+            exp_d, got_d = validators.parse_date(expected), validators.parse_date(got)
+            if exp_d and got_d:
+                exp_n, got_n = exp_d, got_d
             if key not in fields or got in (None, ""):
                 verdict = "MISSED"
                 agg["missed"] += 1
@@ -146,7 +165,6 @@ def eval_qa(limit=None):
         r = query.answer(g["question"])
         status = r.get("status")
         ans = (r.get("answer") or "")
-        ansn = norm(ans)
         abstained = status == "abstained"
         claims = r.get("claims") or []
         cited = sum(1 for c in claims if c.get("citations"))
@@ -159,10 +177,11 @@ def eval_qa(limit=None):
         else:
             if abstained:
                 failures.append("abstained on an answerable question")
-            needles = [norm(x) for x in (g.get("must_contain") or [])]
+            needles = [soft(x) for x in (g.get("must_contain") or [])]
             if needles:
-                hit = any(x in ansn for x in needles) if g.get("any_of") \
-                    else all(x in ansn for x in needles)
+                hay = soft(ans)
+                hit = any(x in hay for x in needles) if g.get("any_of") \
+                    else all(x in hay for x in needles)
                 if not hit:
                     failures.append("answer missing %s" % g.get("must_contain"))
             if g.get("must_cite") and not cited:
